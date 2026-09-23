@@ -161,6 +161,7 @@ public:
     virtual void InitScan(CStoreScanState *state, Snapshot snapshot = NULL);
     void InitReScan();
     virtual void InitPartReScan(Relation rel);
+    void SetPartitionLaneScan(bool enabled);
     bool IsEndScan() const;
 
     // late read APIs
@@ -395,6 +396,7 @@ protected:
     bool m_onlyConstCol;
 
     bool m_timing_on; /* timing CStoreScan steps */
+    bool m_partitionLaneScan; /* the current physical partition is owned by one SMP lane */
 
     RangeScanInRedis m_rangeScanInRedis; /* if it is a range scan at redistribution time */
 

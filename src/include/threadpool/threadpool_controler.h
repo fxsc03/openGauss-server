@@ -82,6 +82,8 @@ public:
     void AddWorkerIfNecessary();
     void SetThreadPoolInfo();
     int GetThreadNum();
+    int GetActiveNumaNum() const;
+    ThreadId GetStreamFromPool(StreamProducer* producer);
     ThreadPoolStat* GetThreadPoolStat(uint32* num);
     bool StayInAttachMode();
     void CloseAllSessions();
@@ -161,6 +163,7 @@ private:
     int m_maxPoolSize;
     int m_maxStreamPoolSize;
     float m_streamProcRatio;
+    bool m_enableNumaDistribute;
 };
 
 #endif /* THREAD_POOL_CONTROLER_H */

@@ -145,16 +145,14 @@ int ProcGlobalSemas(void)
  * Initialize NUMA related parameter.
  *
  * Compatibility with thread pool:
- * 1) allbind/cpubind: If valid in threadpool, utilize and bind cpu list in thread pool.
- * 2) nodebind: not supported for NUMA now.
+ * 1) allbind/cpubind/numabind: If valid in threadpool, utilize and bind cpu list in thread pool.
+ * 2) Partial NUMA scopes must use a contiguous prefix of NUMA nodes (node0, node0-1, ...).
  * 3) nobind: Inconsistent with NUMA. To be compatible with before, invoke numa_run_on_node
  *    in InitProcess().
  * 4) close threadpool: Invoke numa_run_on_node in InitProcess().
  *
  * Limits:
- * 1) Currently only support all of the NUMA nodes. If part of the nodes are filtered by thread pool,
- *    numa distribute will fail.
- * 2) The group num should be consistent with NUMA nodes.
+ * 1) The group num should be consistent with the active NUMA nodes.
  *
  */
 void InitNuma(void)
@@ -172,7 +170,7 @@ void InitNuma(void)
                     (errmsg("No multiple NUMA nodes available: %d.", numaNodeNum)));
         } else if (g_threadPoolControler) {
             if (g_threadPoolControler->CheckNumaDistribute(numaNodeNum)) {
-                g_instance.shmem_cxt.numaNodeNum = numaNodeNum;
+                g_instance.shmem_cxt.numaNodeNum = g_threadPoolControler->GetActiveNumaNum();
                 g_instance.numa_cxt.inheritThreadPool = true;
             } else if (g_threadPoolControler->GetCpuBindType() == NO_CPU_BIND) {
                 g_instance.shmem_cxt.numaNodeNum = numaNodeNum;

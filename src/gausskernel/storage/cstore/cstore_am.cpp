@@ -142,6 +142,7 @@ CStore::CStore()
       m_needRCheck(false),
       m_onlyConstCol(false),
       m_timing_on(false),
+      m_partitionLaneScan(false),
       m_rangeScanInRedis({false,0,0}),
       m_useBtreeIndex(false),
       m_firstColIdx(0),
@@ -152,6 +153,11 @@ CStore::CStore()
     // please remind that you must put the space deallocate in the deconstructor function
     // do not rely on memory context reset
     // there will be memory leak due to cstore index rescan function.!!!!
+}
+
+void CStore::SetPartitionLaneScan(bool enabled)
+{
+    m_partitionLaneScan = enabled;
 }
 
 /*
@@ -2083,7 +2089,7 @@ bool CStore::LoadCUDesc(
         loadCUDescInfoPtr->nextCUID = cu_id;
 
         /* Parallel scan CU divide. */
-        if (u_sess->stream_cxt.producer_dop > 1 &&
+        if (!m_partitionLaneScan && u_sess->stream_cxt.producer_dop > 1 &&
             (cu_id % u_sess->stream_cxt.producer_dop != (uint32)u_sess->stream_cxt.smp_id))
             continue;
 
@@ -4249,8 +4255,12 @@ void ScanDeltaStore(CStoreScanState* node, VectorBatch* outBatch, List* indexqua
     if (node->ss_deltaScanEnd)
         return;
 
-    /* For SMP, only the first thread scan delta table. */
-    if (u_sess->stream_cxt.smp_id != 0)
+    /*
+     * Ordinarily only lane 0 scans a shared delta relation. In partition-lane
+     * mode each physical partition is owned by exactly one lane, so its owner
+     * must also scan that partition's delta relation.
+     */
+    if (!node->partitionLaneScan && u_sess->stream_cxt.smp_id != 0)
         return;
 
     bool hasIndexFilter = (list_length(indexqual) > 0);

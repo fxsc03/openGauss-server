@@ -738,7 +738,7 @@ ThreadId ApplyStreamThread(StreamProducer *producer)
     StoreStreamSyncParam(&producer->m_syncParam);
 
     if (t_thrd.threadpool_cxt.group != NULL) {
-        tid = t_thrd.threadpool_cxt.group->GetStreamFromPool(producer);
+        tid = g_threadPoolControler->GetStreamFromPool(producer);
         STREAM_LOG(DEBUG2, "[StreamPool] Apply thread %lu query_id %lu, tlevel %u, smpid %u",
                    tid,
                    producer->getKey().queryId,

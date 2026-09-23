@@ -710,6 +710,7 @@ CStoreScanState* ExecInitCStoreScan(
     scan_stat->ps.state = estate;
     scan_stat->ps.vectorized = true;
     scan_stat->isPartTbl = node->isPartTbl;
+    scan_stat->partitionLaneScan = false;
     plan_stat = &scan_stat->ps;
     scan_stat->partScanDirection = node->partScanDirection;
     scan_stat->m_isReplicaTable = node->is_replica_table;
@@ -1231,6 +1232,8 @@ void ExecReSetRuntimeKeys(CStoreScanState* node)
 void ExecReScanCStoreScan(CStoreScanState* node)
 {
     TableScanDesc scan;
+
+    node->m_CStore->SetPartitionLaneScan(node->partitionLaneScan);
 
     if (node->isSampleScan) {
         /* Remember we need to do BeginSampleScan again (if we did it at all) */

@@ -4396,6 +4396,20 @@ static void try_add_partiterator(PlannerInfo* root, RelOptInfo* rel, RangeTblEnt
             rel->cheapest_unique_path = itrPath;
         }
 
+        /*
+         * set_cheapest() also caches the best serial and parallel paths as
+         * direct pointers.  Keep those caches in sync when their scan path
+         * is wrapped by PartIterator; otherwise join path generation compares
+         * the wrapper against the stale CStoreScan pointer and rejects every
+         * partitioned parallel join candidate as non-cheapest.
+         */
+        if (path == rel->cheapest_total_single_path) {
+            rel->cheapest_total_single_path = itrPath;
+        }
+        if (path == rel->cheapest_total_parallel_path) {
+            rel->cheapest_total_parallel_path = itrPath;
+        }
+
         /* replace entry in cheapest_total_path */
         foreach (ctPathCell, rel->cheapest_total_path) {
             if (lfirst(ctPathCell) == path) {
@@ -4755,4 +4769,3 @@ void debug_print_rel(PlannerInfo* root, RelOptInfo* rel)
 }
 
 #endif /* OPTIMIZER_DEBUG */
-

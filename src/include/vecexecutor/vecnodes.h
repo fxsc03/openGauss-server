@@ -256,6 +256,7 @@ typedef struct CStoreScanState : ScanState {
     TableScanDesc ss_currentDeltaScanDesc;
     bool ss_deltaScan;
     bool ss_deltaScanEnd;
+    bool partitionLaneScan;
 
     VectorBatch* m_pScanBatch;     // batch to work on
     VectorBatch* m_pCurrentBatch;  // output batch

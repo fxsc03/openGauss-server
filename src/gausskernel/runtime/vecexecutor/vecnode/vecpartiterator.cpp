@@ -103,6 +103,21 @@ static int GetVecscanPartitionNum(const PartIteratorState* node)
     return partitionScan;
 }
 
+static CStoreScanState* GetPartitionLaneCStoreScan(VecPartIteratorState* node)
+{
+    if (!u_sess->attr.attr_sql.enable_cstore_partition_lane_scan ||
+        u_sess->stream_cxt.producer_dop <= 1 || !IsA(node->ps.lefttree, CStoreScanState)) {
+        return NULL;
+    }
+
+    CStoreScanState* scan = (CStoreScanState*)node->ps.lefttree;
+    if (!scan->isPartTbl || ((Scan*)scan->ps.plan)->partition_iterator_elimination) {
+        return NULL;
+    }
+
+    return scan;
+}
+
 /* return: false means all patition finished */
 static bool InitVecscanPartition(VecPartIteratorState* node, int partitionScan)
 {
@@ -112,6 +127,7 @@ static bool InitVecscanPartition(VecPartIteratorState* node, int partitionScan)
     ParamExecData* param = NULL;
     List* subPartLengthList = NULL;
     PlanState* noden = NULL;
+    CStoreScanState* laneScan = GetPartitionLaneCStoreScan(node);
 
     /* check sub partitions */
     if (IsA(node->ps.lefttree, RowToVecState)) {
@@ -130,8 +146,19 @@ static bool InitVecscanPartition(VecPartIteratorState* node, int partitionScan)
     }
 #endif
 
-    /* if there is no partition to scan, return false */
-    if (node->currentItr + 1 >= partitionScan) {
+    if (laneScan != NULL) {
+        int dop = (int)u_sess->stream_cxt.producer_dop;
+        int lane = (int)u_sess->stream_cxt.smp_id;
+        int nextItr = (node->currentItr < 0) ? lane : node->currentItr + dop;
+
+        if (nextItr >= partitionScan) {
+            return false;
+        }
+
+        node->currentItr = nextItr;
+        laneScan->partitionLaneScan = true;
+    } else if (node->currentItr + 1 >= partitionScan) {
+        /* if there is no partition to scan, return false */
         if (subPartLengthList != NIL) {
             int subPartLength = (int)list_nth_int(subPartLengthList, node->currentItr);
             if (node->subPartCurrentItr + 1 >= subPartLength) {
@@ -145,7 +172,9 @@ static bool InitVecscanPartition(VecPartIteratorState* node, int partitionScan)
     Assert(ForwardScanDirection == pi_node->direction || BackwardScanDirection == pi_node->direction);
 
     /* set iterator parameter */
-    SetPartitionIteratorParamter(node, subPartLengthList);
+    if (laneScan == NULL) {
+        SetPartitionIteratorParamter(node, subPartLengthList);
+    }
 
     itr_idx = node->currentItr;
     if (BackwardScanDirection == pi_node->direction)

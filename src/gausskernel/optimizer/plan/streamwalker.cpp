@@ -25,7 +25,9 @@
 #include "parser/parsetree.h"
 #include "parser/parse_merge.h"
 #include "utils/syscache.h"
+#include "utils/rel_gs.h"
 #include "pgxc/locator.h"
+#include "pgxc/pgxc.h"
 
 static void stream_walker_query_update(Query* query, shipping_context *cxt);
 static void stream_walker_query_recursive(Query* query, shipping_context *cxt);
@@ -642,7 +644,25 @@ static bool contains_unsupport_tables(List* rtable, Query* query, shipping_conte
                     context->current_shippable = false;
                     return true;
                 }
-                if (rte->inh && has_subclass(rte->relid)) {
+                /*
+                 * Native partition tables use the inheritance flag as an
+                 * implementation detail, but are planned with PartIterator
+                 * rather than the generic inheritance Append machinery.  In
+                 * single-node partition-lane mode they are safe to execute
+                 * with a stream plan; rejecting them here silently resets the
+                 * whole query to DOP 1 before the parallel CStore paths in
+                 * allpaths.cpp can be considered.
+                 */
+                bool allowPartitionLaneStream = false;
+                if (IS_SINGLE_NODE && u_sess->attr.attr_sql.enable_cstore_partition_lane_scan) {
+                    /* rte->ispartrel is populated later on some single-node paths. */
+                    Relation relation = try_relation_open(rte->relid, NoLock);
+                    if (relation != NULL) {
+                        allowPartitionLaneStream = RelationIsPartitioned(relation);
+                        relation_close(relation, NoLock);
+                    }
+                }
+                if (rte->inh && has_subclass(rte->relid) && !allowPartitionLaneStream) {
                     sprintf_rc = sprintf_s(u_sess->opt_cxt.not_shipping_info->not_shipping_reason,
                         NOTPLANSHIPPING_LENGTH,
                         "Table %s inherited can not be shipped",

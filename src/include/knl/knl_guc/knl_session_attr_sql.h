@@ -85,6 +85,7 @@ typedef struct knl_session_attr_sql {
     bool under_explain;
     bool enable_nodegroup_debug;
     bool enable_partitionwise;
+    bool enable_cstore_partition_lane_scan;
     bool enable_remotejoin;
     bool enable_fast_query_shipping;
     bool enable_compress_hll;
@@ -293,5 +294,4 @@ typedef struct knl_session_attr_sql {
 } knl_session_attr_sql;
 
 #endif /* SRC_INCLUDE_KNL_KNL_SESSION_ATTR_SQL */
-
 

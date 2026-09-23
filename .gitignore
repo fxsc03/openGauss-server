@@ -17,6 +17,9 @@ objfiles.txt
 /tmp_build/
 /output/
 /mppdb_temp_install/
+/mppdb_temp_install_gcc10_numa/
+/binarylibs/
+/results/
 /GNUmakefile
 /config.status
 /ereport.txt

@@ -31,6 +31,7 @@
 #include "knl/knl_variable.h"
 
 #include "threadpool/threadpool.h"
+#include "distributelayer/streamProducer.h"
 
 #include "access/xact.h"
 #include "catalog/pg_collation.h"
@@ -87,6 +88,7 @@ ThreadPoolControler::ThreadPoolControler()
     m_maxPoolSize = 0;
     m_maxStreamPoolSize = 0;
     m_streamProcRatio = 0;
+    m_enableNumaDistribute = false;
 }
 
 ThreadPoolControler::~ThreadPoolControler()
@@ -101,6 +103,7 @@ ThreadPoolControler::~ThreadPoolControler()
 
 void ThreadPoolControler::Init(bool enableNumaDistribute)
 {
+    m_enableNumaDistribute = enableNumaDistribute;
 
     m_threadPoolContext = AllocSetContextCreate(g_instance.instance_context,
         "ThreadPoolContext",
@@ -170,8 +173,25 @@ void ThreadPoolControler::Init(bool enableNumaDistribute)
 
 #ifdef __USE_NUMA
     if (enableNumaDistribute) {
-        /* Set to interleave mode for other than worker thread */
-        numa_set_interleave_mask(numa_all_nodes_ptr);
+        /*
+         * Keep shared/global allocations distributed over the NUMA nodes that
+         * actually participate in this instance.  Using numa_all_nodes_ptr
+         * here leaks allocations outside a partial-chiplet experiment and
+         * also overrides the process-level membind policy.
+         */
+        struct bitmask* activeNumaMask = numa_allocate_nodemask();
+        if (activeNumaMask == NULL) {
+            ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY),
+                errmsg("could not allocate active NUMA node mask")));
+        }
+        numa_bitmask_clearall(activeNumaMask);
+        for (int i = 0; i < m_cpuInfo.totalNumaNum; i++) {
+            if (m_cpuInfo.cpuArrSize[i] > 0) {
+                numa_bitmask_setbit(activeNumaMask, i);
+            }
+        }
+        numa_set_interleave_mask(activeNumaMask);
+        numa_free_nodemask(activeNumaMask);
     }
 #endif
 
@@ -660,16 +680,31 @@ bool ThreadPoolControler::CheckNumaDistribute(int numaNodeNum) const
         return false;
     }
 
-    if (m_cpuInfo.totalNumaNum != numaNodeNum  || !m_cpuInfo.cpuArrSize) {
+    if (numaNodeNum <= 1 || m_cpuInfo.activeNumaNum <= 0 ||
+        m_cpuInfo.activeNumaNum > m_cpuInfo.totalNumaNum || !m_cpuInfo.cpuArrSize) {
         ereport(WARNING,
             (errmsg("Can not activate NUMA distribute because no multiple NUMA nodes or CPUs are available.")));
         return false;
     }
 
-    for (int i = 0; i < m_cpuInfo.totalNumaNum; ++i) {
+    /*
+     * InitProcGlobal() currently allocates NUMA-local PGPROC arrays using
+     * node IDs [0, activeNumaNum).  Restrict partial-scope experiments to a
+     * contiguous prefix of NUMA nodes until arbitrary node remapping is
+     * supported there as well.
+     */
+    for (int i = 0; i < m_cpuInfo.activeNumaNum; ++i) {
         if (m_cpuInfo.cpuArrSize[i] <= 0) {
             ereport(WARNING,
                 (errmsg("Can not activate NUMA distribute because no available cpu in node %d.", i)));
+            return false;
+        }
+    }
+
+    for (int i = m_cpuInfo.activeNumaNum; i < m_cpuInfo.totalNumaNum; ++i) {
+        if (m_cpuInfo.cpuArrSize[i] > 0) {
+            ereport(WARNING,
+                (errmsg("Can not activate NUMA distribute for a non-prefix NUMA scope; node %d is active.", i)));
             return false;
         }
     }
@@ -728,6 +763,35 @@ void ThreadPoolControler::ConstrainThreadNum()
 int ThreadPoolControler::GetThreadNum()
 {
     return m_maxPoolSize;
+}
+
+ThreadId ThreadPoolControler::GetStreamFromPool(StreamProducer* producer)
+{
+    ThreadPoolGroup* targetGroup = t_thrd.threadpool_cxt.group;
+
+    if (targetGroup == NULL || producer == NULL) {
+        return InvalidTid;
+    }
+
+    /*
+     * In NUMA-distributed mode, place the same SMP lane of every operator in
+     * the same thread-pool group.  The round-robin mapping spreads a query's
+     * streams over all active NUMA groups and, when query DOP equals the
+     * active CPU count, naturally gives each group one lane per active CPU.
+     * This also prevents one session group from exhausting its per-group
+     * stream limit while the other groups remain idle.
+     */
+    if (m_enableNumaDistribute && m_groupNum > 1) {
+        uint32 groupId = producer->getKey().smpIdentifier % (uint32)m_groupNum;
+        targetGroup = m_groups[groupId];
+    }
+
+    return targetGroup->GetStreamFromPool(producer);
+}
+
+int ThreadPoolControler::GetActiveNumaNum() const
+{
+    return m_cpuInfo.activeNumaNum;
 }
 
 ThreadPoolStat* ThreadPoolControler::GetThreadPoolStat(uint32* num)
@@ -966,4 +1030,3 @@ void ThreadPoolControler::BindThreadToAllAvailCpu(ThreadId thread) const
     if (ret != 0)
         ereport(WARNING, (errmsg("BindThreadToAllAvailCpu fail to bind thread %lu, errno: %d", thread, ret)));
 }
-
